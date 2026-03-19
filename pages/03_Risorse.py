@@ -103,8 +103,10 @@ if risorse_inactive:
 st.divider()
 
 # ─── Add new resource ──────────────────────────────────────────────────────────
+_risorsa_form_v = st.session_state.get("form_risorsa_v", 0)
+
 with st.expander("➕ Aggiungi risorsa", expanded=not risorse):
-    with st.form("form_crea_risorsa"):
+    with st.form(f"form_crea_risorsa_{_risorsa_form_v}"):
         col1, col2 = st.columns(2)
         with col1:
             nome_r = st.text_input("Nome *", placeholder="es. Mario Rossi")
@@ -116,6 +118,7 @@ with st.expander("➕ Aggiungi risorsa", expanded=not risorse):
         try:
             create_risorsa(nome=nome_r, team=team_r)
             st.success(f"Risorsa '{nome_r}' aggiunta.")
+            st.session_state["form_risorsa_v"] = _risorsa_form_v + 1
             st.rerun()
         except ValueError as exc:
             st.error(str(exc))

@@ -55,6 +55,7 @@ def create_attivita(
     team: str,
     nome: str,
     stato: str = "Da Confermare",
+    effort_gg: Optional[float] = None,
     note: Optional[str] = None,
 ) -> Attivita:
     """Create a new activity within a plan.
@@ -66,15 +67,16 @@ def create_attivita(
         team: Team responsible (e.g., 'FEQ', 'DATA').
         nome: Activity name/description.
         stato: Status — must be one of STATI_VALIDI.
+        effort_gg: Optional planned effort in person-days (gg/u).
         note: Optional free-text notes.
 
     Returns:
         The created Attivita object.
 
     Raises:
-        ValueError: On invalid tipo, stato, or blank required fields.
+        ValueError: On invalid tipo, stato, blank required fields, or negative effort.
     """
-    _validate(gruppo, tipo, team, nome, stato)
+    _validate(gruppo, tipo, team, nome, stato, effort_gg)
 
     with get_session() as session:
         att = Attivita(
@@ -84,6 +86,7 @@ def create_attivita(
             team=team.strip(),
             nome=nome.strip(),
             stato=stato,
+            effort_gg=effort_gg,
             note=note,
         )
         session.add(att)
@@ -101,6 +104,7 @@ def update_attivita(
     team: str,
     nome: str,
     stato: str,
+    effort_gg: Optional[float] = None,
     note: Optional[str] = None,
 ) -> Attivita:
     """Update an existing activity.
@@ -112,6 +116,7 @@ def update_attivita(
         team: New team.
         nome: New name.
         stato: New status.
+        effort_gg: Updated planned effort in person-days (gg/u), or None to clear.
         note: Optional notes.
 
     Returns:
@@ -120,7 +125,7 @@ def update_attivita(
     Raises:
         ValueError: If the activity is not found or validation fails.
     """
-    _validate(gruppo, tipo, team, nome, stato)
+    _validate(gruppo, tipo, team, nome, stato, effort_gg)
 
     with get_session() as session:
         att = session.get(Attivita, attivita_id)
@@ -132,6 +137,7 @@ def update_attivita(
         att.team = team.strip()
         att.nome = nome.strip()
         att.stato = stato
+        att.effort_gg = effort_gg
         att.note = note
         session.flush()
         session.expunge(att)
@@ -159,7 +165,14 @@ def delete_attivita(attivita_id: int) -> None:
     touch_piano(piano_id)
 
 
-def _validate(gruppo: str, tipo: str, team: str, nome: str, stato: str) -> None:
+def _validate(
+    gruppo: str,
+    tipo: str,
+    team: str,
+    nome: str,
+    stato: str,
+    effort_gg: Optional[float] = None,
+) -> None:
     """Validate activity fields.
 
     Args:
@@ -168,6 +181,7 @@ def _validate(gruppo: str, tipo: str, team: str, nome: str, stato: str) -> None:
         team: Team string.
         nome: Name string.
         stato: Status string.
+        effort_gg: Planned effort in person-days; must be >= 0 if provided.
 
     Raises:
         ValueError: If any field is invalid.
@@ -182,3 +196,5 @@ def _validate(gruppo: str, tipo: str, team: str, nome: str, stato: str) -> None:
         raise ValueError(f"Tipo non valido: '{tipo}'. Valori ammessi: {TIPI_VALIDI}")
     if stato not in STATI_VALIDI:
         raise ValueError(f"Stato non valido: '{stato}'. Valori ammessi: {STATI_VALIDI}")
+    if effort_gg is not None and effort_gg < 0:
+        raise ValueError("L'effort non può essere negativo.")

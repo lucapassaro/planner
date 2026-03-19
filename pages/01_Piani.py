@@ -82,8 +82,10 @@ if st.session_state.get("piano_id"):
     )
 
 # ─── Create new plan ──────────────────────────────────────────────────────────
+_piano_form_v = st.session_state.get("form_piano_v", 0)
+
 with st.expander("➕ Crea nuovo piano", expanded=not piani):
-    with st.form("form_crea_piano"):
+    with st.form(f"form_crea_piano_{_piano_form_v}"):
         nome_input = st.text_input("Nome piano", placeholder="es. Piano 2026 Q1")
         anno_input = st.selectbox("Anno di riferimento", anni_disponibili(), index=2)
         submitted = st.form_submit_button("Crea Piano", type="primary")
@@ -93,6 +95,7 @@ with st.expander("➕ Crea nuovo piano", expanded=not piani):
             p = create_piano(nome=nome_input, anno=anno_input)
             _select_piano(p.id, p.nome)
             st.success(f"Piano '{p.nome}' creato e selezionato.")
+            st.session_state["form_piano_v"] = _piano_form_v + 1
             st.rerun()
         except ValueError as exc:
             st.error(str(exc))

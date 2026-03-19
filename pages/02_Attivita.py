@@ -41,7 +41,7 @@ if attivita_list:
     for gruppo, atts in sorted(gruppi.items()):
         with st.expander(f"📁 {gruppo} ({len(atts)} attività)", expanded=True):
             for att in atts:
-                col1, col2, col3, col4, col5, col6 = st.columns([4, 2, 2, 2, 1, 1])
+                col1, col2, col3, col4, col5, col6, col7 = st.columns([4, 2, 2, 2, 2, 1, 1])
                 with col1:
                     st.markdown(f"**{att.nome}**")
                 with col2:
@@ -58,9 +58,12 @@ if attivita_list:
                     }
                     st.caption(f"{color_map.get(att.stato, '')} {att.stato}")
                 with col5:
+                    if att.effort_gg:
+                        st.caption(f"⏱ {att.effort_gg:.1f} gg/u")
+                with col6:
                     if st.button("✏️", key=f"edit_{att.id}", help="Modifica"):
                         st.session_state[f"editing_{att.id}"] = True
-                with col6:
+                with col7:
                     if st.button("🗑️", key=f"del_{att.id}", help="Elimina"):
                         st.session_state[f"confirm_del_att_{att.id}"] = True
 
@@ -73,6 +76,13 @@ if attivita_list:
                             new_nome = st.text_input("Nome", value=att.nome)
                             new_gruppo = st.text_input("Gruppo", value=att.gruppo)
                             new_team = st.text_input("Team", value=att.team)
+                            new_effort = st.number_input(
+                                "Effort pianificato (gg/u)",
+                                min_value=0.0,
+                                step=0.5,
+                                value=float(att.effort_gg) if att.effort_gg else 0.0,
+                                help="Giorni-uomo totali pianificati per questa attività",
+                            )
                         with c2:
                             new_tipo = st.selectbox(
                                 "Tipo",
@@ -96,7 +106,9 @@ if attivita_list:
                         try:
                             update_attivita(
                                 att.id, new_gruppo, new_tipo, new_team,
-                                new_nome, new_stato, new_note or None,
+                                new_nome, new_stato,
+                                effort_gg=new_effort if new_effort > 0 else None,
+                                note=new_note or None,
                             )
                             st.session_state.pop(f"editing_{att.id}", None)
                             st.rerun()
@@ -131,8 +143,11 @@ else:
 st.divider()
 
 # ─── Create new activity ──────────────────────────────────────────────────────
+# Bug fix: versioned form key resets all widgets after a successful submission.
+_form_v = st.session_state.get("form_att_v", 0)
+
 with st.expander("➕ Aggiungi attività", expanded=not attivita_list):
-    with st.form("form_crea_att"):
+    with st.form(f"form_crea_att_{_form_v}"):
         c1, c2 = st.columns(2)
         with c1:
             nome_input = st.text_input("Nome attività *", placeholder="es. Migrazione ETL")
@@ -141,6 +156,13 @@ with st.expander("➕ Aggiungi attività", expanded=not attivita_list):
                 placeholder="es. FEQ, Progetto Nobis, AM generale",
             )
             team_input = st.text_input("Team *", placeholder="es. FEQ, DATA")
+            effort_input = st.number_input(
+                "Effort pianificato (gg/u)",
+                min_value=0.0,
+                step=0.5,
+                value=0.0,
+                help="Giorni-uomo totali pianificati (facoltativo)",
+            )
         with c2:
             tipo_input = st.selectbox("Tipo *", TIPI_VALIDI)
             stato_input = st.selectbox("Stato *", STATI_VALIDI, index=1)
@@ -157,9 +179,12 @@ with st.expander("➕ Aggiungi attività", expanded=not attivita_list):
                 team=team_input,
                 nome=nome_input,
                 stato=stato_input,
+                effort_gg=effort_input if effort_input > 0 else None,
                 note=note_input or None,
             )
             st.success(f"Attività '{nome_input}' aggiunta.")
+            # Increment version → form key changes → widgets reset on next render
+            st.session_state["form_att_v"] = _form_v + 1
             st.rerun()
         except ValueError as exc:
             st.error(str(exc))

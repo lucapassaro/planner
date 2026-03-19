@@ -125,8 +125,10 @@ else:
 st.divider()
 
 # ─── Add new allocation ───────────────────────────────────────────────────────
+_alloc_form_v = st.session_state.get("form_alloc_v", 0)
+
 with st.expander("➕ Aggiungi allocazione", expanded=True):
-    with st.form("form_add_alloc"):
+    with st.form(f"form_add_alloc_{_alloc_form_v}"):
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -175,6 +177,7 @@ with st.expander("➕ Aggiungi allocazione", expanded=True):
             st.success(
                 f"Allocazione aggiunta: {risorsa_label} — {mese_sel} — {perc_input}%"
             )
+            st.session_state["form_alloc_v"] = _alloc_form_v + 1
             st.rerun()
         except OverallocationError as exc:
             st.error(str(exc))

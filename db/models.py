@@ -68,6 +68,7 @@ class Attivita(Base):
     team: Mapped[str] = mapped_column(String(100), nullable=False)
     nome: Mapped[str] = mapped_column(String(500), nullable=False)
     stato: Mapped[str] = mapped_column(String(50), nullable=False, default="Da Confermare")
+    effort_gg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     piano: Mapped["Piano"] = relationship("Piano", back_populates="attivita")
