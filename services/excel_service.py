@@ -208,6 +208,9 @@ def import_from_excel(file_bytes: bytes, piano_nome: str) -> Dict:
     allocazioni_count = 0
     skipped = 0
     warnings = []
+    # Buffer: accumulate percentages per (att_id, ris_id, mese) across all rows
+    # so that duplicate rows in the Excel are merged by summing their percentages.
+    alloc_buffer: Dict[tuple, float] = {}  # (att_id, ris_id, mese) -> total %
 
     for row_idx in range(2, ws.max_row + 1):
         tipo_val = _cell_str(ws, row_idx, COL_TIPO)
@@ -315,24 +318,36 @@ def import_from_excel(file_bytes: bytes, piano_nome: str) -> Dict:
             anno = int(piano_nome[-4:]) if piano_nome[-4:].isdigit() else 2026
             mese_str = f"{anno}-{m:02d}"
 
-            try:
-                create_allocazione(
-                    attivita_id=attivita_id,
-                    risorsa_id=risorsa_id,
-                    mese=mese_str,
-                    percentuale=perc,
-                )
-                allocazioni_count += 1
-                _log.debug("Riga %d: allocazione creata att=%d ris='%s' mese=%s perc=%.1f%%",
-                           row_idx, attivita_id, persona_val, mese_str, perc)
-            except OverallocationError as exc:
-                msg = f"Riga {row_idx}, mese {mese_str}: {exc}"
-                warnings.append(msg)
-                _log.warning(msg)
-            except Exception as exc:
-                msg = f"Riga {row_idx}, mese {mese_str}: errore imprevisto — {exc}"
-                warnings.append(msg)
-                _log.error(msg)
+            buf_key = (attivita_id, risorsa_id, mese_str)
+            prev = alloc_buffer.get(buf_key, 0.0)
+            alloc_buffer[buf_key] = prev + perc
+            _log.debug(
+                "Riga %d: accodato att=%d ris='%s' mese=%s +%.1f%% (tot=%.1f%%)",
+                row_idx, attivita_id, persona_val, mese_str, perc, alloc_buffer[buf_key],
+            )
+
+    # ── Phase 2: write accumulated allocations ────────────────────────────────
+    _log.info("Scrittura %d allocazioni uniche (da %d righe Excel) ...",
+              len(alloc_buffer), ws.max_row - 1)
+    for (att_id, ris_id, mese_str), perc_tot in alloc_buffer.items():
+        try:
+            create_allocazione(
+                attivita_id=att_id,
+                risorsa_id=ris_id,
+                mese=mese_str,
+                percentuale=perc_tot,
+            )
+            allocazioni_count += 1
+            _log.debug("Allocazione scritta att=%d ris=%d mese=%s perc=%.1f%%",
+                       att_id, ris_id, mese_str, perc_tot)
+        except OverallocationError as exc:
+            msg = f"att={att_id} ris={ris_id} mese={mese_str}: {exc}"
+            warnings.append(msg)
+            _log.warning(msg)
+        except Exception as exc:
+            msg = f"att={att_id} ris={ris_id} mese={mese_str}: errore — {exc}"
+            warnings.append(msg)
+            _log.error(msg)
 
     touch_piano(piano_id)
     _log.info(
