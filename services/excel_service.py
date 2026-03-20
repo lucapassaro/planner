@@ -33,6 +33,9 @@ from services.attivita_service import create_attivita
 from services.calendario_service import get_giorni_lavorativi, percentuale_to_giorni
 from services.piano_service import create_piano, touch_piano
 from services.risorsa_service import create_risorsa, get_all_risorse
+from utils.app_logger import get_logger
+
+_log = get_logger("excel")
 
 # Header labels for the 12 months
 MESI_IT = [
@@ -177,21 +180,28 @@ def import_from_excel(file_bytes: bytes, piano_nome: str) -> Dict:
     Raises:
         ValueError: If the plan name is taken or the file is malformed.
     """
+    _log.info("=== Import Excel avviato: piano='%s' ===", piano_nome)
+
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
     ws = wb.active
 
     # Detect format by checking header row
     headers = [ws.cell(1, c).value for c in range(1, 8)]
     has_persona_col = _detect_persona_column(headers)
+    _log.info("Formato rilevato: %s (righe dati: %d)",
+              "esteso (con Persona)" if has_persona_col else "originale (senza Persona)",
+              ws.max_row - 1)
 
     # Create the plan
     piano = create_piano(piano_nome)
     piano_id = piano.id
+    _log.info("Piano creato: id=%d nome='%s'", piano_id, piano_nome)
 
     # Build resource cache (nome -> id)
     risorsa_cache: Dict[str, int] = {
         r.nome: r.id for r in get_all_risorse(only_active=False)
     }
+    _log.debug("Risorse in cache pre-import: %d", len(risorsa_cache))
 
     attivita_cache: Dict[tuple, int] = {}  # (tipo, gruppo, team, nome) -> id
     attivita_count = 0
@@ -202,12 +212,14 @@ def import_from_excel(file_bytes: bytes, piano_nome: str) -> Dict:
     for row_idx in range(2, ws.max_row + 1):
         tipo_val = _cell_str(ws, row_idx, COL_TIPO)
         if not tipo_val or tipo_val not in ("AM", "EVO"):
+            _log.debug("Riga %d ignorata: tipo='%s' (riga sommario o vuota)", row_idx, tipo_val)
             continue  # skip summary rows and blanks
 
         gruppo_val = _cell_str(ws, row_idx, COL_GRUPPO) or ""
         team_val = _cell_str(ws, row_idx, COL_TEAM) or ""
         nome_val = _cell_str(ws, row_idx, COL_NOME) or ""
         if not nome_val:
+            _log.debug("Riga %d ignorata: nome attività vuoto", row_idx)
             skipped += 1
             continue
 
@@ -223,6 +235,8 @@ def import_from_excel(file_bytes: bytes, piano_nome: str) -> Dict:
         # Validate stato
         valid_stati = ("Confermato", "Da Confermare", "Sospeso", "Chiuso")
         if stato_val not in valid_stati:
+            _log.debug("Riga %d: stato '%s' non valido → sostituito con 'Da Confermare'",
+                       row_idx, stato_val)
             stato_val = "Da Confermare"
 
         # Get or create activity
@@ -239,8 +253,12 @@ def import_from_excel(file_bytes: bytes, piano_nome: str) -> Dict:
                 )
                 attivita_cache[att_key] = att.id
                 attivita_count += 1
+                _log.debug("Riga %d: attività creata id=%d [%s] '%s'",
+                           row_idx, att.id, tipo_val, nome_val)
             except Exception as exc:
-                warnings.append(f"Riga {row_idx}: impossibile creare attività — {exc}")
+                msg = f"Riga {row_idx}: impossibile creare attività '{nome_val}' — {exc}"
+                warnings.append(msg)
+                _log.error(msg)
                 skipped += 1
                 continue
 
@@ -248,6 +266,7 @@ def import_from_excel(file_bytes: bytes, piano_nome: str) -> Dict:
 
         # Read monthly values
         if not persona_val:
+            _log.debug("Riga %d: nessuna persona → allocazioni saltate", row_idx)
             continue  # no person to allocate to
 
         # Get or create resource
@@ -255,6 +274,8 @@ def import_from_excel(file_bytes: bytes, piano_nome: str) -> Dict:
             try:
                 risorsa = create_risorsa(nome=persona_val, team=team_val or "N/A")
                 risorsa_cache[persona_val] = risorsa.id
+                _log.debug("Riga %d: risorsa creata id=%d '%s'",
+                           row_idx, risorsa.id, persona_val)
             except ValueError:
                 # Resource already exists (race condition) — fetch it
                 with get_session() as session:
@@ -265,8 +286,12 @@ def import_from_excel(file_bytes: bytes, piano_nome: str) -> Dict:
                     )
                     if r:
                         risorsa_cache[persona_val] = r.id
+                        _log.debug("Riga %d: risorsa esistente id=%d '%s'",
+                                   row_idx, r.id, persona_val)
                     else:
-                        warnings.append(f"Riga {row_idx}: risorsa '{persona_val}' non trovata.")
+                        msg = f"Riga {row_idx}: risorsa '{persona_val}' non trovata e non creabile."
+                        warnings.append(msg)
+                        _log.warning(msg)
                         continue
 
         risorsa_id = risorsa_cache[persona_val]
@@ -281,6 +306,8 @@ def import_from_excel(file_bytes: bytes, piano_nome: str) -> Dict:
             try:
                 perc = float(raw)
             except (TypeError, ValueError):
+                _log.debug("Riga %d mese %d: valore non numerico '%s' ignorato",
+                           row_idx, m, raw)
                 continue
             if perc <= 0:
                 continue
@@ -296,12 +323,22 @@ def import_from_excel(file_bytes: bytes, piano_nome: str) -> Dict:
                     percentuale=perc,
                 )
                 allocazioni_count += 1
+                _log.debug("Riga %d: allocazione creata att=%d ris='%s' mese=%s perc=%.1f%%",
+                           row_idx, attivita_id, persona_val, mese_str, perc)
             except OverallocationError as exc:
-                warnings.append(f"Riga {row_idx}, mese {mese_str}: {exc}")
+                msg = f"Riga {row_idx}, mese {mese_str}: {exc}"
+                warnings.append(msg)
+                _log.warning(msg)
             except Exception as exc:
-                warnings.append(f"Riga {row_idx}, mese {mese_str}: {exc}")
+                msg = f"Riga {row_idx}, mese {mese_str}: errore imprevisto — {exc}"
+                warnings.append(msg)
+                _log.error(msg)
 
     touch_piano(piano_id)
+    _log.info(
+        "=== Import completato: %d attività, %d allocazioni, %d righe saltate, %d avvisi ===",
+        attivita_count, allocazioni_count, skipped, len(warnings),
+    )
     return {
         "piano_id": piano_id,
         "attivita_count": attivita_count,

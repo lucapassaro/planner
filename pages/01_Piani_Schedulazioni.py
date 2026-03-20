@@ -35,10 +35,7 @@ from services.piano_service import (
     get_all_piani,
     update_piano,
 )
-from services.pianificazione_service import (
-    get_pianificazioni_by_piano,
-    upsert_pianificazione,
-)
+from services.pianificazione_service import get_pianificazioni_by_piano
 from services.risorsa_service import get_all_risorse
 from utils.date_utils import MESI_SHORT, anni_disponibili, mesi_in_anno
 from utils.formatting import style_allocation_cell
@@ -249,51 +246,23 @@ if attivita_list:
 
     df_g2_orig = pd.DataFrame(rows_g2)
 
-    col_cfg_g2: dict = {
-        "_att_id": None,
-        "Tipo": st.column_config.TextColumn("Tipo", disabled=True, width="small"),
-        "Gruppo": st.column_config.TextColumn("Gruppo", disabled=True),
-        "Team": st.column_config.TextColumn("Team", disabled=True, width="small"),
-        "Attività": st.column_config.TextColumn("Attività", disabled=True, width="large"),
-        "Stato": st.column_config.TextColumn("Stato", disabled=True),
-        "Totale gg": st.column_config.NumberColumn("Totale gg", format="%.1f", disabled=True),
-    }
-    for lbl in mesi_labels:
-        col_cfg_g2[lbl] = st.column_config.NumberColumn(lbl, min_value=0.0, step=0.5, format="%.1f")
+    # Display as styled read-only dataframe with Italian decimal separator (comma)
+    df_g2_display = df_g2_orig.drop(columns=["_att_id"])
+    num_cols_g2 = mesi_labels + ["Totale gg"]
 
-    st.data_editor(
-        df_g2_orig,
-        key="de_g2",
-        column_config=col_cfg_g2,
-        num_rows="fixed",
+    def _fmt_it(x):
+        if isinstance(x, (int, float)) and not pd.isna(x):
+            # Italian format: thousands sep = ".", decimal sep = ","
+            return f"{x:,.1f}".replace(",", "\u00b7").replace(".", ",").replace("\u00b7", ".")
+        return x
+
+    styled_g2 = df_g2_display.style.format(_fmt_it, subset=num_cols_g2, na_rep="")
+    st.dataframe(
+        styled_g2,
         use_container_width=True,
         hide_index=True,
+        height=min(600, 40 + len(rows_g2) * 35),
     )
-
-    if st.button("💾 Salva schedulazione", key="btn_save_g2"):
-        delta_g2 = st.session_state.get("de_g2", {})
-        errs_g2 = []
-        saved_g2 = 0
-        for row_idx_str, changes in delta_g2.get("edited_rows", {}).items():
-            row_idx = int(row_idx_str)
-            if row_idx >= len(df_g2_orig):
-                continue
-            att_id = int(df_g2_orig.iloc[row_idx]["_att_id"])
-            for lbl, new_val in changes.items():
-                if lbl not in label_to_mese:
-                    continue
-                mese = label_to_mese[lbl]
-                gg = float(new_val) if new_val is not None else 0.0
-                try:
-                    upsert_pianificazione(att_id, mese, gg)
-                    saved_g2 += 1
-                except Exception as exc:
-                    errs_g2.append(str(exc))
-        for e in errs_g2:
-            st.error(e)
-        if not errs_g2:
-            st.success(f"Schedulazione aggiornata ({saved_g2} {'cella' if saved_g2 == 1 else 'celle'}).")
-        st.rerun()
 else:
     st.info("Nessuna attività nel piano.")
 
