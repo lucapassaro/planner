@@ -62,6 +62,16 @@ def _add_column_if_missing(table: str, column: str, col_type: str) -> None:
             pass  # Column already exists — safe to ignore
 
 
+def reset_db() -> None:
+    """Drop all tables and re-initialize the database from scratch.
+
+    WARNING: destroys all data permanently.
+    After calling this, invoke seed_holidays_if_needed() to re-populate holidays.
+    """
+    Base.metadata.drop_all(engine)
+    init_db()
+
+
 @contextmanager
 def get_session() -> Generator[Session, None, None]:
     """Context manager providing a transactional database session.

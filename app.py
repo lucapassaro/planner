@@ -5,7 +5,7 @@ Navigate via the sidebar to manage plans, activities, resources, and allocations
 
 import streamlit as st
 
-from db.engine import init_db
+from db.engine import init_db, reset_db
 from db.seed_holidays import seed_holidays_if_needed
 
 st.set_page_config(
@@ -82,3 +82,33 @@ if piano_id:
             )
     except Exception as exc:
         st.error(f"Errore nel caricamento del riepilogo: {exc}")
+
+# ─── Admin: Reset DB ───────────────────────────────────────────────────────────
+st.divider()
+with st.sidebar:
+    st.markdown("---")
+    st.subheader("⚙️ Amministrazione")
+    if st.button("🗑 Reset database", type="secondary"):
+        st.session_state["_reset_confirm_open"] = True
+
+if st.session_state.get("_reset_confirm_open"):
+    with st.sidebar:
+        st.warning("**Attenzione:** tutti i dati verranno eliminati definitivamente.")
+        confirmed = st.checkbox("Confermo: voglio cancellare tutti i dati", key="_reset_checkbox")
+        col_ok, col_ann = st.columns(2)
+        with col_ok:
+            if st.button("Conferma reset", type="primary", disabled=not confirmed):
+                try:
+                    reset_db()
+                    seed_holidays_if_needed()
+                    st.cache_resource.clear()
+                    for k in ["piano_id", "piano_nome", "_reset_confirm_open", "_reset_checkbox"]:
+                        st.session_state.pop(k, None)
+                    st.success("Database resettato.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Errore durante il reset: {exc}")
+        with col_ann:
+            if st.button("Annulla"):
+                st.session_state.pop("_reset_confirm_open", None)
+                st.rerun()
