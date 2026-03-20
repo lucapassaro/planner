@@ -212,6 +212,15 @@ for alloc in allocs_raw:
     alloc_perc[k] = alloc.percentuale
     alloc_id_lkp[k] = alloc.id
 
+# Compute gg/u per activity per month from existing allocations (fallback for Grid 2)
+att_gg_alloc: dict = {}  # {att_id: {mese: total_gg}}
+for _alloc in allocs_raw:
+    _m = _alloc.mese
+    _anno_m, _mese_m = int(_m.split("-")[0]), int(_m.split("-")[1])
+    _gg = percentuale_to_giorni(_alloc.percentuale, _anno_m, _mese_m)
+    att_gg_alloc.setdefault(_alloc.attivita_id, {})
+    att_gg_alloc[_alloc.attivita_id][_m] = att_gg_alloc[_alloc.attivita_id].get(_m, 0.0) + _gg
+
 # Activity label map for Griglia 3 added rows
 att_label_to_id = {f"[{a.tipo}] {a.gruppo} / {a.nome}": a.id for a in attivita_list}
 
@@ -232,7 +241,7 @@ if attivita_list:
         att_piani = pianificazioni.get(att.id, {})
         totale = 0.0
         for m, lbl in zip(mesi, mesi_labels):
-            gg = att_piani.get(m, 0.0)
+            gg = att_piani[m] if m in att_piani else att_gg_alloc.get(att.id, {}).get(m, 0.0)
             row[lbl] = gg
             totale += gg
         row["Totale gg"] = round(totale, 1)
