@@ -75,6 +75,9 @@ class Attivita(Base):
     allocazioni: Mapped[List["Allocazione"]] = relationship(
         "Allocazione", back_populates="attivita", cascade="all, delete-orphan"
     )
+    pianificazioni: Mapped[List["PianificazioneMensile"]] = relationship(
+        "PianificazioneMensile", back_populates="attivita", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         CheckConstraint("tipo IN ('AM', 'EVO')", name="ck_attivita_tipo"),
@@ -149,6 +152,36 @@ class Allocazione(Base):
         return (
             f"Allocazione(id={self.id}, risorsa_id={self.risorsa_id}, "
             f"mese={self.mese}, percentuale={self.percentuale})"
+        )
+
+
+class PianificazioneMensile(Base):
+    """Monthly planning for an activity in person-days (gg/u).
+
+    Stores how many person-days are planned for a given activity in a given month.
+    This is separate from Allocazione (which tracks individual resource %).
+    """
+
+    __tablename__ = "pianificazione_mensile"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    attivita_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("attivita.id", ondelete="CASCADE"), nullable=False
+    )
+    mese: Mapped[str] = mapped_column(String(7), nullable=False)  # YYYY-MM
+    gg_pianificati: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    attivita: Mapped["Attivita"] = relationship("Attivita", back_populates="pianificazioni")
+
+    __table_args__ = (
+        UniqueConstraint("attivita_id", "mese", name="uq_pianificazione_mensile"),
+        CheckConstraint("gg_pianificati >= 0", name="ck_gg_pianificati"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"PianificazioneMensile(attivita_id={self.attivita_id}, "
+            f"mese={self.mese}, gg={self.gg_pianificati})"
         )
 
 

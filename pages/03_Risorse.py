@@ -1,5 +1,6 @@
-"""Streamlit page: Resource (team member) management."""
+"""Streamlit page: Resource (team member) management via inline data_editor."""
 
+import pandas as pd
 import streamlit as st
 
 from db.engine import init_db
@@ -17,142 +18,107 @@ st.set_page_config(page_title="Risorse | IT Planner", layout="wide")
 st.title("👥 Risorse del Team")
 st.caption("Le risorse sono condivise tra tutti i piani.")
 
-# ─── List active resources ────────────────────────────────────────────────────
-risorse = get_all_risorse(only_active=True)
-risorse_inactive = get_all_risorse(only_active=False)
-risorse_inactive = [r for r in risorse_inactive if not r.attiva]
+# ─── Active resources grid ─────────────────────────────────────────────────────
+risorse_attive = get_all_risorse(only_active=True)
 
-if risorse:
-    st.subheader(f"Risorse attive ({len(risorse)})")
+st.subheader(f"Risorse attive ({len(risorse_attive)})")
 
-    # Group by team
-    teams: dict = {}
-    for r in risorse:
-        teams.setdefault(r.team, []).append(r)
-
-    for team, members in sorted(teams.items()):
-        with st.expander(f"🏷️ Team {team} ({len(members)})", expanded=True):
-            for r in members:
-                col1, col2, col3, col4 = st.columns([4, 2, 1, 1])
-                with col1:
-                    st.markdown(f"**{r.nome}**")
-                with col2:
-                    st.caption(r.team)
-                with col3:
-                    if st.button("✏️", key=f"edit_r_{r.id}", help="Modifica"):
-                        st.session_state[f"editing_r_{r.id}"] = True
-                with col4:
-                    if st.button("🚫", key=f"deact_{r.id}", help="Disattiva"):
-                        st.session_state[f"confirm_deact_{r.id}"] = True
-
-                # Edit form
-                if st.session_state.get(f"editing_r_{r.id}"):
-                    with st.form(f"form_edit_r_{r.id}"):
-                        new_nome_r = st.text_input("Nome", value=r.nome)
-                        new_team_r = st.text_input("Team", value=r.team)
-                        c_save, c_cancel = st.columns(2)
-                        with c_save:
-                            save_r = st.form_submit_button("Salva", type="primary")
-                        with c_cancel:
-                            cancel_r = st.form_submit_button("Annulla")
-
-                    if save_r:
-                        try:
-                            update_risorsa(r.id, new_nome_r, new_team_r)
-                            st.session_state.pop(f"editing_r_{r.id}", None)
-                            st.rerun()
-                        except ValueError as exc:
-                            st.error(str(exc))
-                    if cancel_r:
-                        st.session_state.pop(f"editing_r_{r.id}", None)
-                        st.rerun()
-
-                # Deactivate confirmation
-                if st.session_state.get(f"confirm_deact_{r.id}"):
-                    st.warning(
-                        f"Disattivare **{r.nome}**? "
-                        "Le allocazioni storiche rimarranno invariate."
-                    )
-                    c1, c2, _ = st.columns([1, 1, 4])
-                    with c1:
-                        if st.button("Sì", key=f"conf_deact_{r.id}", type="primary"):
-                            deactivate_risorsa(r.id)
-                            st.session_state.pop(f"confirm_deact_{r.id}", None)
-                            st.rerun()
-                    with c2:
-                        if st.button("No", key=f"ann_deact_{r.id}"):
-                            st.session_state.pop(f"confirm_deact_{r.id}", None)
-                            st.rerun()
+if risorse_attive:
+    df_risorse = pd.DataFrame([
+        {"_id": r.id, "Nome": r.nome, "Team": r.team}
+        for r in risorse_attive
+    ])
 else:
-    st.info("Nessuna risorsa attiva. Aggiungine una qui sotto.")
+    df_risorse = pd.DataFrame(columns=["_id", "Nome", "Team"])
+
+st.data_editor(
+    df_risorse,
+    key="de_risorse",
+    column_config={
+        "_id": None,
+        "Nome": st.column_config.TextColumn("Nome", required=True, width="large"),
+        "Team": st.column_config.TextColumn("Team", required=True, width="medium"),
+    },
+    num_rows="dynamic",
+    use_container_width=True,
+    hide_index=True,
+)
+
+col_save, col_info = st.columns([1, 3])
+with col_save:
+    save_risorse_btn = st.button("💾 Salva modifiche risorse", type="primary")
+with col_info:
+    st.caption("Modifica Nome e Team direttamente nella griglia. Usa ➕ per aggiungere, 🗑 per disattivare.")
+
+if save_risorse_btn:
+    delta_r = st.session_state.get("de_risorse", {})
+    errors_r = []
+
+    # Deleted rows → soft deactivate
+    for row_idx in delta_r.get("deleted_rows", []):
+        if row_idx < len(df_risorse):
+            r_id = int(df_risorse.iloc[row_idx]["_id"])
+            try:
+                deactivate_risorsa(r_id)
+            except Exception as exc:
+                errors_r.append(f"Disattivazione: {exc}")
+
+    # Edited rows → update
+    for row_idx_str, changes in delta_r.get("edited_rows", {}).items():
+        row_idx = int(row_idx_str)
+        if row_idx < len(df_risorse):
+            r_id = int(df_risorse.iloc[row_idx]["_id"])
+            new_nome = changes.get("Nome", df_risorse.iloc[row_idx]["Nome"])
+            new_team = changes.get("Team", df_risorse.iloc[row_idx]["Team"])
+            try:
+                update_risorsa(r_id, new_nome, new_team)
+            except Exception as exc:
+                errors_r.append(f"Modifica '{new_nome}': {exc}")
+
+    # Added rows → create
+    for row_data in delta_r.get("added_rows", []):
+        new_nome = str(row_data.get("Nome", "")).strip()
+        new_team = str(row_data.get("Team", "")).strip()
+        if not new_nome:
+            errors_r.append("Il nome della risorsa non può essere vuoto.")
+            continue
+        if not new_team:
+            errors_r.append(f"Il team per '{new_nome}' non può essere vuoto.")
+            continue
+        try:
+            create_risorsa(nome=new_nome, team=new_team)
+        except Exception as exc:
+            errors_r.append(f"Creazione '{new_nome}': {exc}")
+
+    if errors_r:
+        for e in errors_r:
+            st.error(e)
+    else:
+        st.success("Modifiche risorse salvate.")
+    st.rerun()
 
 # ─── Inactive resources ────────────────────────────────────────────────────────
-if risorse_inactive:
-    with st.expander(f"Risorse disattivate ({len(risorse_inactive)})"):
-        for r in risorse_inactive:
-            col1, col2, col3 = st.columns([4, 2, 2])
-            with col1:
-                st.markdown(f"~~{r.nome}~~")
-            with col2:
-                st.caption(r.team)
-            with col3:
-                if st.button("Riattiva", key=f"react_{r.id}"):
-                    reactivate_risorsa(r.id)
-                    st.rerun()
+tutte = get_all_risorse(only_active=False)
+risorse_inattive = [r for r in tutte if not r.attiva]
 
-st.divider()
-
-# ─── Add new resource ──────────────────────────────────────────────────────────
-_risorsa_form_v = st.session_state.get("form_risorsa_v", 0)
-
-with st.expander("➕ Aggiungi risorsa", expanded=not risorse):
-    with st.form(f"form_crea_risorsa_{_risorsa_form_v}"):
-        col1, col2 = st.columns(2)
-        with col1:
-            nome_r = st.text_input("Nome *", placeholder="es. Mario Rossi")
-        with col2:
-            team_r = st.text_input("Team *", placeholder="es. FEQ, DATA")
-        submitted_r = st.form_submit_button("Aggiungi Risorsa", type="primary")
-
-    if submitted_r:
-        try:
-            create_risorsa(nome=nome_r, team=team_r)
-            st.success(f"Risorsa '{nome_r}' aggiunta.")
-            st.session_state["form_risorsa_v"] = _risorsa_form_v + 1
-            st.rerun()
-        except ValueError as exc:
-            st.error(str(exc))
-
-# ─── Bulk add ─────────────────────────────────────────────────────────────────
-with st.expander("➕ Aggiungi più risorse (lista)"):
-    st.caption("Inserisci una risorsa per riga nel formato: Nome, Team")
-    bulk_text = st.text_area(
-        "Lista risorse",
-        placeholder="Mario Rossi, FEQ\nGiulia Bianchi, DATA\nLuca Verdi, FEQ",
-        height=150,
-    )
-    team_default = st.text_input("Team di default (se non specificato)", value="")
-
-    if st.button("Aggiungi tutte", type="primary"):
-        added, errors = 0, []
-        for line in bulk_text.strip().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            parts = [p.strip() for p in line.split(",")]
-            r_nome = parts[0] if parts else ""
-            r_team = parts[1] if len(parts) > 1 else team_default
-            if not r_nome:
-                continue
+if risorse_inattive:
+    st.divider()
+    with st.expander(f"Risorse disattivate ({len(risorse_inattive)})"):
+        df_inattive = pd.DataFrame([
+            {"Nome": r.nome, "Team": r.team, "_id": r.id}
+            for r in risorse_inattive
+        ])
+        st.dataframe(
+            df_inattive[["Nome", "Team"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+        ris_inattive_nomi = {r.nome: r.id for r in risorse_inattive}
+        sel_react = st.selectbox("Risorsa da riattivare", list(ris_inattive_nomi.keys()), key="sel_react")
+        if st.button("Riattiva risorsa selezionata"):
             try:
-                create_risorsa(nome=r_nome, team=r_team or "N/A")
-                added += 1
-            except ValueError as exc:
-                errors.append(str(exc))
-
-        if added:
-            st.success(f"{added} risorse aggiunte.")
-        for e in errors:
-            st.warning(e)
-        if added:
-            st.rerun()
+                reactivate_risorsa(ris_inattive_nomi[sel_react])
+                st.success(f"'{sel_react}' riattivata.")
+                st.rerun()
+            except Exception as exc:
+                st.error(str(exc))
